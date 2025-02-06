@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y \
 # Set GDAL environment variables
 ENV CPLUS_INCLUDE_PATH=/usr/include/gdal
 ENV C_INCLUDE_PATH=/usr/include/gdal
-ENV GDAL_VERSION=3.4.0  # Adjust if necessary
+ENV GDAL_VERSION=3.4.0  # Adjust to match available version
 
 WORKDIR /app
 COPY . /app
