@@ -1,4 +1,3 @@
-# Install GDAL first to prevent rasterio issues
 GDAL==3.4.0
 rasterio==1.3.8
 numpy==1.26.0
