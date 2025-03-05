@@ -8,6 +8,7 @@ import pandas as pd
 from shapely.geometry import Point, LineString
 import os
 import tempfile
+import shutil
 
 # Coordinate conversion functions
 def geo_to_pixel(lon, lat, transform):
@@ -226,6 +227,22 @@ def main():
             os.unlink(dem_path)
         except Exception as e:
             st.error(f"An error occurred: {str(e)}")
+
+        # Display output files and provide download links
+        st.subheader("Output Files")
+        output_files = os.listdir(output_dir)
+        if output_files:
+            for file in output_files:
+                file_path = os.path.join(output_dir, file)
+                with open(file_path, "rb") as f:
+                    st.download_button(
+                        label=f"Download {file}",
+                        data=f,
+                        file_name=file,
+                        mime="application/octet-stream"
+                    )
+        else:
+            st.warning("No output files generated.")
 
 if __name__ == "__main__":
     main()
