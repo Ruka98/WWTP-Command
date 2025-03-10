@@ -52,8 +52,8 @@ def get_circular_pixels(lon, lat, radius_m, transform, geod, dem_shape, dem_data
 
 def trace_downstream(start_lon, start_lat, initial_volume, transform, dem_data, geod):
     # Hydrological parameters
-    evaporation_rate = 5.787e-8  # m/s
-    infiltration_rate = 1e-6     # m/s
+    evaporation_rate = 7e-3 / 86400  # 7 mm/day converted to m/s
+    infiltration_rate = 1e-7       # 0.0001 mm/s converted to m/s
     canal_width = 10.0           # meters
     
     x, y = geo_to_pixel(start_lon, start_lat, transform)
