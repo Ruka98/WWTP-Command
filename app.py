@@ -49,13 +49,7 @@ def get_circular_pixels(lon, lat, radius_m, transform, geod, dem_shape, dem_data
     
     return circular_pixels
 
-def trace_downstream(start_lon, start_lat, daily_volume, transform, dem_data, geod):
-    # Convert daily volume to flow rate (m³/s)
-    Q = daily_volume / 86400  
-    evaporation_rate = 7e-3 / 86400  # 7 mm/day to m/s
-    infiltration_rate = 1e-7        # 0.0001 mm/s
-    canal_width = 10.0             # meters
-
+def trace_downstream(start_lon, start_lat, transform, dem_data, geod):
     x, y = geo_to_pixel(start_lon, start_lat, transform)
     if x < 0 or x >= dem_data.shape[1] or y < 0 or y >= dem_data.shape[0]:
         return []
@@ -64,21 +58,10 @@ def trace_downstream(start_lon, start_lat, daily_volume, transform, dem_data, ge
         return []
     
     path = []
-    current_Q = Q
-    cumulative_time = 0.0  # Cumulative time in seconds
-    hydro_data = []
-    
     current_lon, current_lat = pixel_to_geo(x, y, transform)
-    hydro_data.append({
-        'x': x,
-        'y': y,
-        'lon': current_lon,
-        'lat': current_lat,
-        'flow_rate': current_Q,
-        'time': cumulative_time
-    })
+    path.append((current_lon, current_lat))
     
-    while current_Q > 0:
+    while True:
         min_elev = current_elev
         best_nx, best_ny = x, y
         # Find steepest downhill neighbor
@@ -99,45 +82,16 @@ def trace_downstream(start_lon, start_lat, daily_volume, transform, dem_data, ge
         if (best_nx, best_ny) == (x, y):
             break  # No downhill neighbor
         
-        # Calculate distance to next pixel
-        next_lon, next_lat = pixel_to_geo(best_nx, best_ny, transform)
-        _, _, distance = geod.inv(current_lon, current_lat, next_lon, next_lat)
-        elevation_diff = min_elev - current_elev
-        
-        # Calculate hydrological parameters
-        slope = -elevation_diff / distance if distance > 0 else 0
-        velocity = np.sqrt(9.81 * slope) if slope > 0 else 0
-        if velocity <= 0:
-            break
-        time = distance / velocity
-        
-        # Calculate losses
-        loss_per_second = (evaporation_rate + infiltration_rate) * canal_width * distance
-        current_Q -= loss_per_second
-        cumulative_time += time
-        
-        if current_Q <= 0:
-            break
-        
         # Update position
         x, y = best_nx, best_ny
         current_elev = dem_data[y, x]
-        current_lon, current_lat = next_lon, next_lat
-        
-        # Record data
-        hydro_data.append({
-            'x': x,
-            'y': y,
-            'lon': current_lon,
-            'lat': current_lat,
-            'flow_rate': max(current_Q, 0),
-            'time': cumulative_time
-        })
+        current_lon, current_lat = pixel_to_geo(x, y, transform)
+        path.append((current_lon, current_lat))
     
-    return hydro_data
+    return path
 
 def main():
-    st.title("WWTP Model Interface with Hydrograph")
+    st.title("WWTP Model Interface")
     
     # File uploaders
     dem_file = st.file_uploader("Upload DEM file (.tif)", type=["tif"])
@@ -171,7 +125,6 @@ def main():
                 command_areas = np.zeros_like(dem_data.filled(0), dtype=np.int32)
                 wwtp_points = []
                 streamlines = []
-                hydrographs = []
 
                 for idx, (lon, lat, daily_volume) in enumerate(wwtp_locations, 1):
                     try:
@@ -190,26 +143,16 @@ def main():
                         for (y, x) in circular_pixels:
                             command_areas[y, x] = idx
                         
-                        # Part 2: Trace downstream and generate hydrograph
-                        hydro_data = trace_downstream(lon, lat, daily_volume, transform, dem_data, geod)
-                        if hydro_data:
-                            # Save hydrograph data
-                            df_hydro = pd.DataFrame(hydro_data)
-                            df_hydro['time_days'] = df_hydro['time'] / 86400
-                            csv_path = os.path.join(output_dir, f"hydrograph_wwtp_{idx}.csv")
-                            df_hydro.to_csv(csv_path, index=False)
-                            hydrographs.append(csv_path)
-                            
-                            # Create streamline
-                            downstream_coords = [(row['lon'], row['lat']) for _, row in df_hydro.iterrows()]
-                            if len(downstream_coords) >= 2:
-                                streamlines.append(LineString(downstream_coords))
-                                # Create 1km buffer around path
-                                for coord in downstream_coords:
-                                    plon, plat = coord
-                                    buffer_pixels = get_circular_pixels(plon, plat, 1000, transform, geod, dem_data.shape, dem_data)
-                                    for (y_b, x_b) in buffer_pixels:
-                                        command_areas[y_b, x_b] = idx
+                        # Part 2: Trace downstream
+                        downstream_coords = trace_downstream(lon, lat, transform, dem_data, geod)
+                        if len(downstream_coords) >= 2:
+                            streamlines.append(LineString(downstream_coords))
+                            # Create 1km buffer around path
+                            for coord in downstream_coords:
+                                plon, plat = coord
+                                buffer_pixels = get_circular_pixels(plon, plat, 1000, transform, geod, dem_data.shape, dem_data)
+                                for (y_b, x_b) in buffer_pixels:
+                                    command_areas[y_b, x_b] = idx
                         
                         # Save WWTP location
                         wwtp_points.append(Point(lon, lat))
@@ -255,15 +198,31 @@ def main():
                     streamline_gdf.to_file(output_file, driver='GeoJSON')
                     st.success(f"Streamlines saved to {output_file}")
                 
-                # Display hydrographs
-                st.subheader("Hydrograph Data")
-                for csv_path in hydrographs:
-                    with open(csv_path, "rb") as f:
+                # Allow users to download GeoJSON files
+                st.subheader("Download GeoJSON Files")
+                if os.path.exists(os.path.join(output_dir, "command_areas.geojson")):
+                    with open(os.path.join(output_dir, "command_areas.geojson"), "rb") as f:
                         st.download_button(
-                            label=f"Download Hydrograph {os.path.basename(csv_path)}",
+                            label="Download Command Areas GeoJSON",
                             data=f,
-                            file_name=os.path.basename(csv_path),
-                            mime="text/csv"
+                            file_name="command_areas.geojson",
+                            mime="application/geo+json"
+                        )
+                if os.path.exists(os.path.join(output_dir, "wwtp_locations.geojson")):
+                    with open(os.path.join(output_dir, "wwtp_locations.geojson"), "rb") as f:
+                        st.download_button(
+                            label="Download WWTP Locations GeoJSON",
+                            data=f,
+                            file_name="wwtp_locations.geojson",
+                            mime="application/geo+json"
+                        )
+                if os.path.exists(os.path.join(output_dir, "streamlines.geojson")):
+                    with open(os.path.join(output_dir, "streamlines.geojson"), "rb") as f:
+                        st.download_button(
+                            label="Download Streamlines GeoJSON",
+                            data=f,
+                            file_name="streamlines.geojson",
+                            mime="application/geo+json"
                         )
                 
             # Clean up temporary DEM file
